@@ -1,5 +1,5 @@
 exp_name: config
-seed: 21
+seed: 6
 torch_deterministic: True
 device: cpu
 track: True
@@ -10,8 +10,8 @@ save_model: True
 upload_model: False
 hf_entity: 
 print_step: 100000
-sigmoid_shift: 0.5
-sigmoid_scale: 10
+sigmoid_shift: 0.75
+sigmoid_scale: 50
 size_env: 8
 # C51 Algorithm specific arguments
 env_id: MiniGrid-DoorKey-8x8-v0
