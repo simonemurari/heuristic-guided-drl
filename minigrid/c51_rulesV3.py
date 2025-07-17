@@ -10,8 +10,6 @@ sys.path.append(str(Path(__file__).parent.parent))
 from config import Args
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-import minigrid
-from minigrid.core.constants import IDX_TO_COLOR
 import gymnasium as gym
 import numpy as np
 import torch
@@ -20,17 +18,14 @@ import torch.optim as optim
 import tyro
 from stable_baselines3.common.buffers import ReplayBuffer
 from torch.utils.tensorboard import SummaryWriter
+from minigrid.core.constants import IDX_TO_COLOR
 import warnings
 from collections import namedtuple
-from dotenv import load_dotenv
 
-load_dotenv(".env")
-WANDB_KEY = os.getenv("WANDB_KEY")
 warnings.filterwarnings("ignore", category=DeprecationWarning)
-print(
-    f"Torch: {torch.__version__}, cuda ON: {torch.cuda.is_available()}, device = {Args.device}"
-)
-# Base C51 algorithm
+# print(f"Torch: {torch.__version__}, cuda ON: {torch.cuda.is_available()}")
+
+# Rules applied to the C51 algorithm only during training (v3)
 
 # Add the same RuleAugmentedReplayBufferSamples namedtuple as c51_rules_training_v3_ws.py
 RuleAugmentedReplayBufferSamples = namedtuple(
@@ -44,6 +39,10 @@ RuleAugmentedReplayBufferSamples = namedtuple(
         "rule_suggestions",
     ],
 )
+
+# print(f"Torch: {torch.__version__}, cuda ON: {torch.cuda.is_available()}")
+
+# Rules applied to the C51 algorithm only during training (v3)
 
 # Pre-computed constant arrays for observation processing
 DOOR_STATES = ["open", "closed", "locked"]
@@ -123,9 +122,62 @@ class RuleAugmentedReplayBuffer(ReplayBuffer):
             rewards=batch.rewards,
             rule_suggestions=rule_suggestions_list,
         )
+    
+
+def _plot_pmfs(
+    original_pmfs, modified_pmfs, action_index, n_categories, alpha, title_prefix
+):
+    """
+    Plots the PMFs for original network action, modified action, and their combined probabilities.
+
+      Args:
+          original_pmfs (torch.Tensor): Original PMF from the neural network (1, num_actions, num_categories).
+          modified_pmfs (torch.Tensor): Modified PMF after rule application (1, num_actions, num_categories).
+          combined_pmfs (torch.Tensor): Combined PMF (same as modified in current implementation) (1, num_actions, num_categories).
+          action_index (int): The index of the action to plot.
+          n_categories (int): Number of categories (atoms) in the PMFs
+          alpha (float): The epsilon value for exploration
+          title_prefix (string): A prefix to add to the titles of the plots
+
+    """
+    # Make sure the input tensors are in CPU
+    original_pmfs = original_pmfs.cpu().detach().numpy()
+    modified_pmfs = modified_pmfs.cpu().detach().numpy()
+
+    # Extract the PMFs for the specified action
+    original_pmf = original_pmfs[0, action_index]
+    modified_pmf = modified_pmfs[0, action_index]
+
+    # Map the range to value range
+    x = np.linspace(Args.v_min, Args.v_max, n_categories)
+    # Create subplots
+    _, axs = plt.subplots(1, 2, figsize=(15, 5))
+
+    # Plot the original network PMF
+    axs[0].bar(x, original_pmf, label="Original PMF", color="skyblue")
+    axs[0].set_title(f"{title_prefix} Original PMF - Action {action_index} - eps={alpha:.2f}")
+    axs[0].set_xlim(Args.v_min - 2, Args.v_max + 2)
+    axs[0].set_ylim(0, 1.1 * np.max(original_pmf))
+    axs[0].set_xlabel("Return")
+    axs[0].set_ylabel("Probability")
+    axs[0].legend()
+
+    # Plot the modified PMF (after rule application)
+    axs[1].bar(x, modified_pmf, label="Modified PMF", color="salmon")
+    axs[1].set_title(f"{title_prefix} Modified PMF - Action {action_index} - eps={alpha:.2f}")
+    axs[1].set_xlim(Args.v_min - 2, Args.v_max + 2)
+    axs[1].set_ylim(0, 1.1 * np.max(original_pmf))
+    axs[1].set_xlabel("Return")
+    axs[1].set_ylabel("Probability")
+    axs[1].legend()
+    plt.tight_layout()
+    if not os.path.exists("plots_test/"):
+        os.makedirs("plots_test/")
+    plt.savefig(f"plots_test/{title_prefix}_pmfs_{action_index}_{alpha:.2f}_{datetime.now().strftime('%Y_%m_%d-%H_%M_%S')}.png")
+    plt.close()
 
 
-def make_env(env_id, n_keys, seed, idx, capture_video, run_name):
+def make_env(env_id, seed, n_keys, idx, capture_video, run_name):
     def thunk():
         if capture_video and idx == 0:
             env = gym.make(env_id, render_mode="rgb_array")
@@ -140,6 +192,9 @@ def make_env(env_id, n_keys, seed, idx, capture_video, run_name):
         return env
 
     return thunk
+
+
+
 
 
 # ALGO LOGIC: initialize agent here:
@@ -157,6 +212,10 @@ class QNetwork(nn.Module):
             nn.ReLU(),
             nn.Linear(128, self.n * n_atoms),
         )
+        # self.plot_rule_distribution()  # Plot the rule PMF
+        # assfafsa
+        self.plots_done = {0.99: False, 0.75: False, 0.5: False, 0.25: False, 0.05: False}
+        # Define action mappings (adjust as needed based on your environment)
         self.action_map = {
             "left": 0,  # Turn left
             "right": 1,  # Turn right
@@ -164,22 +223,160 @@ class QNetwork(nn.Module):
             "pickup": 3,  # Pickup object
             "toggle": 5,  # Open door
         }
-        self.conf_level = 0.8  # Confidence level for rule-based actions
+        self.conf_level = 0.8
 
-    def get_action(self, x, action=None):
+    def get_action(self, x, stored_rule_actions=None, action=None, skip=False, epsilon=1.0, rule_influence=1.0):
+        """
+        Vectorized action selection with rule guidance for improved performance.
+        The logic is functionally identical to the original but avoids slow Python loops.
+        """
+        batch_size = x.shape[0]
+        device = x.device
+
+        # Get distributional Q-values from the network
         logits = self.network(x)
-        # probability mass function for each action
-        pmfs = torch.softmax(logits.view(len(x), self.n, self.n_atoms), dim=2)
-        q_values = (pmfs * self.atoms).sum(2)
-        if action is None:
-            action = torch.argmax(q_values, 1)
+        pmfs = torch.softmax(logits.view(batch_size, self.n, self.n_atoms), dim=2)
 
-        return action, pmfs[torch.arange(len(x)), action]
+        if skip:
+            q_values = (pmfs * self.atoms).sum(2)
+            if action is None:
+                action = torch.argmax(q_values, 1)
+            return action, pmfs[torch.arange(batch_size), action]
+
+        # Get rule suggestions (this part still involves a Python loop in _apply_rules_batch)
+        rule_actions_list = (
+            self._apply_rules_batch(self.get_observables(x[:, 4:]))
+            if stored_rule_actions is None
+            else stored_rule_actions
+        )
+
+        # Convert rule suggestions (which can contain None) into a tensor for masking
+        # Use -1 as a sentinel value for 'no rule applied'
+        rule_actions_tensor = torch.tensor(
+            [r if r is not None else -1 for r in rule_actions_list],
+            dtype=torch.long,
+            device=device,
+        )
+
+        # Create a boolean mask for batch items that have a rule suggestion
+        has_rule_mask = rule_actions_tensor != -1
+
+        # If no rules were triggered in the entire batch, we can return early
+        if not torch.any(has_rule_mask):
+            q_values = (pmfs * self.atoms).sum(2)
+            if action is None:
+                action = torch.argmax(q_values, dim=1)
+            return action, pmfs[torch.arange(batch_size), action], rule_actions_list
+
+         # --- Vectorized PMF Shifting (Optimized for Speed) ---
+        combined_pmfs = pmfs.clone()
+
+        # Calculate a dynamic shift amount based on epsilon.
+        max_shift = self.n_atoms - 1
+        shift_amount = int(epsilon * max_shift * rule_influence)
+
+        if shift_amount > 0:
+            # 1. Create a mask for all actions that should be rewarded (shifted right).
+            # This is True where a rule exists AND the action IS the one suggested.
+            all_actions_grid = torch.arange(self.n, device=device).expand(batch_size, self.n)
+            actions_to_reward_mask = has_rule_mask.unsqueeze(1) & (
+                all_actions_grid == rule_actions_tensor.unsqueeze(1)
+            )
+
+            # If no actions need rewarding in the batch, we can skip the rest.
+            if torch.any(actions_to_reward_mask):
+                # 2. Select only the PMFs that need to be shifted.
+                pmfs_to_shift = pmfs[actions_to_reward_mask]
+
+                # 3. Vectorize the "shift from mean" logic.
+                # Calculate mean values and corresponding mean bin indices for all selected PMFs at once.
+                mean_values = (pmfs_to_shift * self.atoms).sum(dim=1, keepdim=True)
+                mean_bin_indices = (torch.abs(self.atoms - mean_values)).argmin(dim=1)
+
+                # Create a grid of bin indices for vectorized calculations.
+                bin_indices_grid = torch.arange(self.n_atoms, device=device).expand_as(pmfs_to_shift)
+
+                # Calculate the distance of each bin from its distribution's mean bin.
+                distance_from_mean = torch.abs(bin_indices_grid - mean_bin_indices.unsqueeze(1))
+
+                # Calculate the shift for each bin. The shift is greatest at the mean and decreases with distance.
+                current_shift = torch.clamp(shift_amount - distance_from_mean, min=0)
+
+                # Calculate the new indices after the RIGHTWARD shift.
+                new_indices = bin_indices_grid + current_shift
+
+                # 4. Move the probability mass in a vectorized way.
+                # Create a destination tensor filled with zeros.
+                shifted_pmfs = torch.zeros_like(pmfs_to_shift)
+                # Use `scatter_add_` for a safe and efficient parallel update.
+                # We only consider bins where the new index is valid (< n_atoms).
+                valid_mask = new_indices < self.n_atoms
+                shifted_pmfs.scatter_add_(1, new_indices.long() * valid_mask.long(), pmfs_to_shift * valid_mask)
+
+                # 5. Place the modified PMFs back into the main tensor.
+                combined_pmfs[actions_to_reward_mask] = shifted_pmfs
+
+                # --- Plotting Logic ---
+        # This block plots the effect of rules on PMFs at specific epsilon values.
+        # It runs only once for each epsilon threshold defined in self.plots_done.
+        for plot_eps, done in self.plots_done.items():
+            if not done and epsilon <= plot_eps:
+                first_rule_idx_tensor = torch.where(has_rule_mask)[0]
+                if len(first_rule_idx_tensor) > 0:
+                    plot_idx = first_rule_idx_tensor[0].item()
+                    suggested_action = rule_actions_tensor[plot_idx].item()
+                    
+                    # Find a non-suggested action to plot for comparison
+                    non_suggested_action = -1
+                    for act in range(self.n):
+                        if act != suggested_action:
+                            non_suggested_action = act
+                            break
+                    
+                    if non_suggested_action != -1:
+                        original_pmf_for_plot = pmfs[plot_idx].unsqueeze(0)
+                        modified_pmf_for_plot = combined_pmfs[plot_idx].unsqueeze(0)
+
+                        # Plot 1: The SUGGESTED action
+                        _plot_pmfs(
+                            original_pmf_for_plot,
+                            modified_pmf_for_plot,
+                            suggested_action,
+                            self.n_atoms,
+                            epsilon,
+                            f"seed={Args.seed}_Eps_{plot_eps:.2f}_Action_{suggested_action}-SUGGESTED"
+                        )
+
+                        # Plot 2: A NOT SUGGESTED action
+                        _plot_pmfs(
+                            original_pmf_for_plot,
+                            modified_pmf_for_plot,
+                            non_suggested_action,
+                            self.n_atoms,
+                            epsilon,
+                            f"seed={Args.seed}_Eps_{plot_eps:.2f}_Action_{non_suggested_action}-NOT_SUGGESTED"
+                        )
+
+                        self.plots_done[plot_eps] = True # Mark as done to prevent re-plotting
+                        break # Exit the loop after plotting for this threshold
+
+        # --- Vectorized Normalization ---
+        # Normalize the distributions only for batch items where a rule was applied.
+        # This ensures that each action's probability distribution sums to 1.
+        combined_pmfs[has_rule_mask] /= combined_pmfs[has_rule_mask].sum(dim=2, keepdim=True)
+
+        # --- Final Calculations ---
+        q_values = (combined_pmfs * self.atoms).sum(2)
+        if action is None:
+            action = torch.argmax(q_values, dim=1)
+
+        return action, combined_pmfs[torch.arange(batch_size), action], rule_actions_list
+
 
     def _apply_rules_batch(self, batch_observables):
         """Apply rules to each environment observation in the batch"""
         rule_actions = []
-
+        
         for observables in batch_observables:
             # Parse observables
             keys = [o for o in observables if o[0] == "key"]
@@ -294,17 +491,17 @@ class QNetwork(nn.Module):
                 rule_actions.append(None)  # No applicable rule
 
         return rule_actions
-
+    
     def _get_weights(self, batch_of_observables):
         """
         Apply rules to observations and return action weights for each observation
         """
         device = self.atoms.device
         batch_size = len(batch_of_observables)
-
+        
         # Pre-allocate tensor with default low confidence
         weights = torch.full((batch_size, self.n), 1 - self.conf_level, device=device)
-
+        
         for batch_idx, observables in enumerate(batch_of_observables):
             # Parse observables
             keys = [o for o in observables if o[0] == "key"]
@@ -314,7 +511,7 @@ class QNetwork(nn.Module):
             carrying_keys = [o for o in observables if o[0] == "carryingKey"]
             locked_doors = [o for o in observables if o[0] == "locked"]
             closed_doors = [o for o in observables if o[0] == "closed"]
-
+            
             # Rule 1: pickup(X) :- key(X), samecolor(X,Y), door(Y), notcarrying
             if keys and doors and not carrying_keys:
                 for key in keys:
@@ -331,7 +528,7 @@ class QNetwork(nn.Module):
                             action = self._navigate_towards(key_x, key_y, walls)
                             weights[batch_idx, action] = self.conf_level
                             break
-
+            
             # Rule 2: open(X) :- door(X), locked(X), key(Z), carryingKey(Z), samecolor(X,Z)
             elif doors and locked_doors and carrying_keys:
                 carrying_key_color = carrying_keys[0][1][0]
@@ -355,7 +552,7 @@ class QNetwork(nn.Module):
                         # Move towards the door with wall avoidance
                         action = self._navigate_towards(door_x, door_y, walls)
                         weights[batch_idx, action] = self.conf_level
-
+            
             # Rule 3: goto :- goal(X), unlocked
             elif goals:
                 goal = goals[0]
@@ -363,7 +560,7 @@ class QNetwork(nn.Module):
 
                 # Check if path to goal is blocked by closed/locked doors
                 blocked_by_door = False
-
+                
                 # Direction to goal
                 direction_to_goal = (
                     1 if goal_x > 0 else (-1 if goal_x < 0 else 0),
@@ -379,13 +576,13 @@ class QNetwork(nn.Module):
                     )
 
                     door_color = door[1][0]
-
+                    
                     # Check if door is in same direction and closer than goal
                     same_direction = (
-                        direction_to_goal[0] == door_direction[0]
-                        and direction_to_goal[1] == door_direction[1]
+                        direction_to_goal[0] == door_direction[0] and 
+                        direction_to_goal[1] == door_direction[1]
                     )
-
+                    
                     door_distance = abs(door_x) + abs(door_y)
                     goal_distance = abs(goal_x) + abs(goal_y)
                     door_is_closer = door_distance < goal_distance
@@ -394,11 +591,8 @@ class QNetwork(nn.Module):
                     door_is_closed = any(cd[1][0] == door_color for cd in closed_doors)
                     door_is_locked = any(ld[1][0] == door_color for ld in locked_doors)
 
-                    if (
-                        same_direction
-                        and door_is_closer
-                        and (door_is_closed or door_is_locked)
-                    ):
+                    if (same_direction and door_is_closer and 
+                        (door_is_closed or door_is_locked)):
                         blocked_by_door = True
                         break
 
@@ -409,17 +603,17 @@ class QNetwork(nn.Module):
                         # Move towards the goal with wall avoidance
                         action = self._navigate_towards(goal_x, goal_y, walls)
                         weights[batch_idx, action] = self.conf_level
-
+        
         # Normalize weights to sum to 1.0 per observation
         weights = weights / weights.sum(1, keepdim=True)
-
+        
         return weights
 
     def _navigate_towards(self, target_x, target_y, walls=None):
         """
         Improved navigation helper that avoids walls when moving towards a target
 
-        Args:
+        Args:   
             target_x: Relative x-coordinate of the target
             target_y: Relative y-coordinate of the target
             walls: List of wall observations with their positions
@@ -534,12 +728,10 @@ if __name__ == "__main__":
 
     args = tyro.cli(Args)
     assert args.num_envs == 1, "vectorized envs are not supported at the moment"
-    run_name = f"C51_{args.env_id}__seed={args.seed}__{start_datetime}"
+    run_name = f"C51rulesV3_{args.env_id}__seed{args.seed}__{start_datetime}"
     if args.track:
         import wandb
-
-        # wandb.login(key=WANDB_KEY)
-        wandb.tensorboard.patch(root_logdir=f"C51rulesv2/runs/{run_name}/train")
+        wandb.tensorboard.patch(root_logdir=f"C51rulesV3/runs_rules_training/{run_name}/train")
         wandb.init(
             project=args.wandb_project_name,
             entity=args.wandb_entity,
@@ -548,9 +740,9 @@ if __name__ == "__main__":
             name=run_name,
             monitor_gym=True,
             save_code=True,
-            group=f"C51rulesv2_{args.exploration_fraction}_{args.run_code}",
+            group=f"C51rules_{args.exploration_fraction}_{args.run_code}",
         )
-    writer = SummaryWriter(f"C51rulesv2/runs/{run_name}/train")
+    writer = SummaryWriter(f"C51rulesV3/runs_rules_training/{run_name}/train")
     writer.add_text(
         "hyperparameters",
         "|param|value|\n|-|-|\n%s"
@@ -560,24 +752,19 @@ if __name__ == "__main__":
     episodes_lengths = []
     len_episodes_returns = 0
 
+
     # TRY NOT TO MODIFY: seeding
-    print(
-        f"File: {os.path.basename(__file__)}, using seed {args.seed} and exploration fraction {args.exploration_fraction}"
-    )
+    print(f'File: {os.path.basename(__file__)}, using seed {args.seed} and exploration fraction {args.exploration_fraction}')
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     torch.backends.cudnn.deterministic = args.torch_deterministic
-    # torch.backends.cudnn.benchmark = False
-
     device = args.device
 
     # env setup
     envs = gym.vector.SyncVectorEnv(
         [
-            make_env(
-                args.env_id, args.n_keys, args.seed + i, i, args.capture_video, run_name
-            )
+            make_env(args.env_id, args.seed + i, args.n_keys, i, args.capture_video, run_name)
             for i in range(args.num_envs)
         ]
     )
@@ -596,6 +783,7 @@ if __name__ == "__main__":
     ).to(device)
     target_network.load_state_dict(q_network.state_dict())
 
+    # Use RuleAugmentedReplayBuffer instead of ReplayBuffer
     rb = RuleAugmentedReplayBuffer(
         args.buffer_size,
         envs.single_observation_space,
@@ -611,7 +799,17 @@ if __name__ == "__main__":
     print(
         f"Starting training for {args.total_timesteps} timesteps on {args.env_id} with {args.n_keys} keys, with print_step={print_step}"
     )
-    for global_step in tqdm(range(args.total_timesteps), colour="green"):
+
+    # Create tqdm progress bar
+    progress_bar = tqdm(
+        range(args.total_timesteps),
+        desc=f"Training seed {args.seed}",
+        colour="blue",
+        miniters=5000,
+        maxinterval=10,
+    )
+
+    for global_step in progress_bar:
         # ALGO LOGIC: put action logic here
         epsilon = linear_schedule(
             args.start_e,
@@ -623,13 +821,20 @@ if __name__ == "__main__":
             obs_img = q_network.get_observables(obs[:, 4:])
             weights = q_network._get_weights(obs_img).squeeze().cpu().numpy()
             actions = np.random.choice(q_network.n, p=weights, size=(envs.num_envs,))
-            rule_actions = q_network._apply_rules_batch(obs_img)
-        else:
-            actions, pmf = q_network.get_action(torch.Tensor(obs).float().to(device))
-            actions = actions.cpu().numpy()
+            # Get rule suggestions even for exploration actions
             rule_actions = q_network._apply_rules_batch(
-                q_network.get_observables(obs[:, 4:])
+                obs_img
             )
+        else:
+            # Updated to use the new get_action method that returns rule_actions
+            actions, pmf, rule_actions = q_network.get_action(
+                torch.Tensor(obs).float().to(device), skip=False, epsilon=epsilon,
+                rule_influence=args.rule_influence
+            )
+            if isinstance(actions, torch.Tensor):
+                actions = actions.cpu().numpy()
+            else:
+                actions = np.array([actions])
 
         # TRY NOT TO MODIFY: execute the game and log data.
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
@@ -650,8 +855,8 @@ if __name__ == "__main__":
                         old_len_episodes_returns = len_episodes_returns
                         len_episodes_returns = len(episodes_returns)
                         print_num_eps = len_episodes_returns - old_len_episodes_returns
-                        mean_ep_return = np.mean(episodes_returns[-print_num_eps:])
-                        mean_ep_lengths = np.mean(episodes_lengths[-print_num_eps:])
+                        mean_ep_return = np.mean(episodes_returns[-print_num_eps :])
+                        mean_ep_lengths = np.mean(episodes_lengths[-print_num_eps :])
                         tot_mean_return = np.mean(episodes_returns)
                         tot_mean_length = np.mean(episodes_lengths)
                         tqdm.write(
@@ -659,7 +864,7 @@ if __name__ == "__main__":
                         )
                         print_step += args.print_step
 
-        # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
+        # Update to include rule_actions in rb.add
         real_next_obs = next_obs.copy()
         for idx, trunc in enumerate(truncations):
             if trunc:
@@ -675,18 +880,11 @@ if __name__ == "__main__":
                 data = rb.sample(args.batch_size)
                 with torch.no_grad():
                     _, next_pmfs = target_network.get_action(
-                        data.next_observations.float()
+                        data.next_observations.float(), skip=True
                     )
-
-                    rule_suggestions = [rs if rs is not None else -1 for rs in data.rule_suggestions]
-                    rule_suggestions = torch.tensor(rule_suggestions, device=data.actions.device)
-                    rule_mask = (rule_suggestions == data.actions.flatten())
-                    bias = epsilon * 0.8 * args.v_max
                     next_atoms = data.rewards + args.gamma * target_network.atoms * (
                         1 - data.dones
                     )
-                    next_atoms += rule_mask.float().unsqueeze(1) * bias
-
                     # projection
                     delta_z = target_network.atoms[1] - target_network.atoms[0]
                     tz = next_atoms.clamp(args.v_min, args.v_max)
@@ -702,8 +900,14 @@ if __name__ == "__main__":
                     for i in range(target_pmfs.size(0)):
                         target_pmfs[i].index_add_(0, l[i].long(), d_m_l[i])
                         target_pmfs[i].index_add_(0, u[i].long(), d_m_u[i])
-                _, old_pmfs = q_network.get_action(
-                    data.observations.float(), data.actions.flatten()
+
+                _, old_pmfs, _ = q_network.get_action(
+                    data.observations.float(),
+                    stored_rule_actions=data.rule_suggestions,
+                    action=data.actions.flatten(),
+                    skip=False,
+                    epsilon=epsilon,
+                    rule_influence=args.rule_influence,
                 )
                 loss = (
                     -(target_pmfs * old_pmfs.clamp(min=1e-5, max=1 - 1e-5).log()).sum(
@@ -733,77 +937,61 @@ if __name__ == "__main__":
                 target_network.load_state_dict(q_network.state_dict())
 
     plt.plot(episodes_returns)
-    plt.title(f"C51 on {args.env_id} - Return over {args.total_timesteps} timesteps")
+    plt.title(f'C51rulesV3 on {args.env_id} - Return over {args.total_timesteps} timesteps')
     plt.xlabel("Episode")
     plt.ylabel("Return")
     plt.grid(True)
-    path = f"C51/{args.env_id}_c51_{args.total_timesteps}_{start_datetime}"
-    if not os.path.exists("C51/"):
-        os.makedirs("C51/")
+    path = f'C51rulesV3/{args.env_id}_C51rules_{args.total_timesteps}_{start_datetime}'
+    if not os.path.exists("C51rulesV3/"):
+        os.makedirs("C51rulesV3/")
     os.makedirs(path)
-    plt.savefig(f"{path}/{args.env_id}_c51_{args.total_timesteps}_{start_datetime}.png")
+    plt.savefig(f"{path}/{args.env_id}_C51rules_{args.total_timesteps}_{start_datetime}.png")
     plt.close()
-    with open(f"{path}/c51_args.txt", "w") as f:
+    with open(f"{path}/C51rules_args.txt", "w") as f:
         for key, value in vars(args).items():
             if key == "env_id":
                 f.write("# C51 Algorithm specific arguments\n")
-            if (
-                key == "sigmoid_shift"
-                or key == "sigmoid_scale"
-                or key == "distribution"
-            ):
-                continue
             f.write(f"{key}: {value}\n")
 
     if args.save_model:
-        model_path = f"{path}/c51_model.pt"
+        model_path = f"{path}/C51rules_model.pt"
         model_data = {
             "model_weights": q_network.state_dict(),
             "args": vars(args),
         }
         torch.save(model_data, model_path)
         print(f"model saved to {model_path}")
-        from baseC51.c51_eval import evaluate
-
-        eval_episodes = 100000
+        from baseC51.c51_eval import QNetwork as QNetworkEval
+        from C51rules_eval import evaluate
+        eval_episodes=100000
         episodic_returns = evaluate(
             model_path,
             make_env,
             args.env_id,
             eval_episodes=eval_episodes,
             run_name=f"{run_name}-eval",
-            Model=QNetwork,
+            Model=QNetworkEval,
             device=device,
-            epsilon=0,
+            epsilon=0
         )
-        writer = SummaryWriter(f"C51/runs/{run_name}/eval")
+        writer = SummaryWriter(f"C51rulesV3/runs_rules_training/{run_name}/eval")
         for idx, episodic_return in enumerate(episodic_returns):
             writer.add_scalar("episodic_return", episodic_return, idx)
 
-        plt.figure()
         plt.plot(episodic_returns)
-        plt.title(f"C51Eval on {args.env_id} - Return over {eval_episodes} episodes")
+        plt.title(f'C51rulesV3 Eval on {args.env_id} - Return over {eval_episodes} episodes')
         plt.xlabel("Episode")
         plt.ylabel("Return")
         plt.ylim(0, 1)
         plt.grid(True)
-        plt.savefig(
-            f"{path}/{args.env_id}_c51_{args.total_timesteps}_{start_datetime}_eval.png"
-        )
+        plt.savefig(f"{path}/{args.env_id}_C51rules_{eval_episodes}_{start_datetime}_eval.png")
 
         if args.upload_model:
             from cleanrl_utils.huggingface import push_to_hub
 
             repo_name = f"{args.env_id}-{args.exp_name}-seed{args.seed}"
             repo_id = f"{args.hf_entity}/{repo_name}" if args.hf_entity else repo_name
-            push_to_hub(
-                args,
-                episodic_returns,
-                repo_id,
-                "C51",
-                f"runs/{run_name}",
-                f"videos/{run_name}-eval",
-            )
+            push_to_hub(args, episodic_returns, repo_id, "C51rulesV3", f"runs/{run_name}", f"videos/{run_name}-eval")
 
     envs.close()
     writer.close()
