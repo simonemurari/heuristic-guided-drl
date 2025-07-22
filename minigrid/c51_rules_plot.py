@@ -125,7 +125,7 @@ class RuleAugmentedReplayBuffer(ReplayBuffer):
     
 
 def _plot_pmfs(
-    original_pmfs, modified_pmfs, action_index, n_categories, alpha, title_prefix, rule_influence=1.0, episode_step=0, plot_type="exploit"
+    original_pmfs, modified_pmfs, action_index, n_categories, alpha, title_prefix, episode_step=0, plot_type="exploit"
 ):
     """
     Plots the PMFs for original network action, modified action, and their combined probabilities.
@@ -162,8 +162,8 @@ def _plot_pmfs(
     axs[1].legend()
     plt.tight_layout()
     
-    # Create directory structure based on epsilon and rule influence
-    plot_dir = Path(f"V2aplots/{args.run_code}/epsilon_{alpha:.2f}/rule_influence_{rule_influence:.2f}/{plot_type}")
+    # Create directory structure based on epsilon
+    plot_dir = Path(f"V1plots/{args.run_code}/epsilon_{alpha:.2f}/{plot_type}")
     plot_dir.mkdir(parents=True, exist_ok=True)
     
     # Save the plot with a detailed filename
@@ -188,7 +188,73 @@ def make_env(env_id, seed, n_keys, idx, capture_video, run_name):
     return thunk
 
 
+def _plot_pmfs_old(
+    pmfs_rules, pmfs, combined_pmfs, action_index, n_categories, alpha, title_prefix
+):
+    """
+    Plots the PMFs for a rule-based action, a network action, and their combined probabilities.
 
+      Args:
+          pmfs_rules (torch.Tensor): PMF from rules of shape (1, num_actions, num_categories).
+          pmfs (torch.Tensor): PMF from the neural network (1, num_actions, num_categories).
+          combined_pmfs (torch.Tensor): Combined PMF, result of multiplying pmfs and pmfs_rules (1, num_actions, num_categories).
+          action_index (int): The index of the action to plot.
+          n_categories (int): Number of categories (atoms) in the PMFs
+          title_prefix (string): A prefix to add to the titles of the plots
+
+    """
+    # Make sure the input tensors are in CPU
+    pmfs_rules = pmfs_rules.cpu().detach().numpy()
+    pmfs = pmfs.cpu().detach().numpy()
+    combined_pmfs = combined_pmfs.cpu().detach().numpy()
+
+    # Extract the PMFs for the specified action
+    rule_pmf = pmfs_rules[0]
+    network_pmf = pmfs[action_index]
+    combined_pmf = combined_pmfs[action_index]
+
+    # Map the range 0 to 51 to 0 to 1
+    x = np.linspace(Args.v_min, Args.v_max, n_categories)
+    # Create subplots
+    _, axs = plt.subplots(1, 3, figsize=(15, 5))
+
+    # Plot the rule-based PMF
+    axs[0].plot(x, rule_pmf, label="Rule PMF", color="skyblue")
+    axs[0].set_title(
+        f"{title_prefix} Rule PMF - Action {action_index} - alpha={alpha:.2f}"
+    )
+    axs[0].set_xlim(Args.v_min - 0.05, Args.v_max + 0.05)
+    axs[0].set_xlabel("Return")
+    axs[0].set_ylabel("Probability")
+    axs[0].legend()
+
+    # Plot the neural network PMF
+    axs[1].plot(x, network_pmf, label="Network PMF", color="salmon")
+    axs[1].set_title(
+        f"{title_prefix} Network PMF - Action {action_index} - alpha={alpha:.2f}"
+    )
+    axs[1].set_xlim(Args.v_min - 0.05, Args.v_max + 0.05)
+    axs[1].set_xlabel("Return")
+    axs[1].set_ylabel("Probability")
+    axs[1].legend()
+
+    # Plot the combined PMF
+    axs[2].plot(x, combined_pmf, label="Combined PMF", color="lightgreen")
+    axs[2].set_title(
+        f"{title_prefix} Combined PMF - Action {action_index} - alpha={alpha:.2f}"
+    )
+    axs[2].set_xlim(Args.v_min - 0.05, Args.v_max + 0.05)
+    axs[2].set_xlabel("Return")
+    axs[2].set_ylabel("Probability")
+    axs[2].legend()
+
+    plt.tight_layout()
+    if not os.path.exists("plots/"):
+        os.makedirs("plots/")
+    plt.savefig(
+        f"plots/{title_prefix}_pmfs_{action_index}_{alpha:.2f}_{datetime.now().strftime('%Y_%m_%d-%H_%M_%S')}.png"
+    )
+    plt.close()
 
 
 # ALGO LOGIC: initialize agent here:
@@ -206,6 +272,10 @@ class QNetwork(nn.Module):
             nn.ReLU(),
             nn.Linear(128, self.n * n_atoms),
         )
+        self.rule_pmf = self.rule_distribution()  # Pre-compute rule PMF
+        # self.plot_rule_distribution()  # Plot the rule PMF
+        # assfafsa
+        # self.plots = {0.99: False, 0.75: False, 0.5: False, 0.25: False, 0.05: False}
         
         # --- Plotting State ---
         self.plotting_epsilons = {0.8, 0.6, 0.4, 0.2}
@@ -223,187 +293,179 @@ class QNetwork(nn.Module):
             "right": 1,  # Turn right
             "forward": 2,  # Move forward
             "pickup": 3,  # Pickup object
-            "drop (UNUSED)": 4,  # Drop object (not used in this context)
+            "drop (UNUSED)": 4,  # Drop object
             "toggle": 5,  # Open door
-            "done (UNUSED)": 6,  # Mark as done (not used in this context)
+            "done (UNUSED)": 6,  # End episode
         }
         # Create a reverse map for easy lookup of action names
         self.action_id_to_name = {v: k for k, v in self.action_map.items()}
-        self.conf_level = 0.8
+        self.conf_level = 0.8  # Confidence level for rule-based actions
 
-    def get_action(self, x, stored_rule_actions=None, action=None, skip=False, epsilon=1.0, rule_influence=0.5, global_step=0, is_exploit_step=False):
+    def rule_distribution(self):
         """
-        Vectorized action selection with rule guidance for improved performance.
-        The logic is functionally identical to the original but avoids slow Python loops.
+        Hybrid rule distribution: baseline 0.05 everywhere, smooth peak up to 0.5.
+        The peak is at the rightmost atom (highest return).
         """
-        batch_size = x.shape[0]
-        device = x.device
+        n = self.n_atoms
+        device = self.atoms.device
 
+        # Baseline
+        baseline = 0.0
+        weights = torch.full((n,), baseline, device=device)
+
+        # Gaussian-like peak at the rightmost atom
+        peak_height = 0.8
+        peak_pos = n - 1  # rightmost
+        peak_width = n // 16  # controls spread; adjust as needed
+
+        # Add the peak
+        idxs = torch.arange(n, device=device)
+        peak = torch.exp(-0.5 * ((idxs - peak_pos) / peak_width) ** 2)
+        peak = peak / peak.max() * (peak_height - baseline)
+        weights += peak
+
+        return weights.view(1, 1, n)
+
+    def plot_rule_distribution(self):
+        rule_pmf_np = self.rule_pmf.squeeze().numpy()  # Convert to NumPy for plotting
+        plt.figure(figsize=(8, 6))
+        x = np.linspace(Args.v_min, Args.v_max, self.n_atoms)
+        plt.bar(x, rule_pmf_np, width=(1 / Args.n_atoms) * 0.8)
+        plt.xlabel("Return Value (Atom)")
+        plt.ylabel("Probability")
+        plt.xlim(Args.v_min - 0.05, Args.v_max + 0.05)
+        plt.grid(axis="y", alpha=0.75)
+        plt.savefig(f"plots/rule_pmf_{Args.run_code}.png")  # Save the plot
+        plt.close()
+    
+    def get_action(self, x, stored_rule_actions=None, action=None, skip=False, epsilon=1.0, global_step=0, is_exploit_step=False):
+        """Simplified action selection with rule guidance and plotting"""
+        batch_size = len(x)
+        
         # Get distributional Q-values from the network
         logits = self.network(x)
         pmfs = torch.softmax(logits.view(batch_size, self.n, self.n_atoms), dim=2)
+        
+        # Store original PMFs for plotting
+        original_pmfs = pmfs.clone()
 
         if skip:
             q_values = (pmfs * self.atoms).sum(2)
             if action is None:
                 action = torch.argmax(q_values, 1)
-            return action, pmfs[torch.arange(batch_size), action]
-
-        # Get rule suggestions (this part still involves a Python loop in _apply_rules_batch)
-        rule_actions_list = (
+            return action, pmfs[torch.arange(len(x)), action]
+        
+        # Get rule suggestions (could be None for some samples)
+        rule_actions = (
             self._apply_rules_batch(self.get_observables(x[:, 4:]))
             if stored_rule_actions is None
             else stored_rule_actions
         )
 
-        # Convert rule suggestions (which can contain None) into a tensor for masking
-        # Use -1 as a sentinel value for 'no rule applied'
-        rule_actions_tensor = torch.tensor(
-            [r if r is not None else -1 for r in rule_actions_list],
-            dtype=torch.long,
-            device=device,
-        )
-
-        # Create a boolean mask for batch items that have a rule suggestion
-        has_rule_mask = rule_actions_tensor != -1
-
-        # If no rules were triggered in the entire batch, we can return early
-        if not torch.any(has_rule_mask):
-            q_values = (pmfs * self.atoms).sum(2)
-            if action is None:
-                action = torch.argmax(q_values, dim=1)
-            return action, pmfs[torch.arange(batch_size), action], rule_actions_list
-
-        # --- Vectorized PMF Shifting ---
+        # rule_influence = torch.zeros_like(pmfs, device=Args.device)
         combined_pmfs = pmfs.clone()
-        shift_amount = int(epsilon * rule_influence * self.n_atoms)
 
-        if shift_amount > 0:
-            # Create a mask for actions that should be penalized. This is True where:
-            # 1. A rule exists for the batch item (has_rule_mask)
-            # 2. The action is NOT the one suggested by the rule
-            all_actions_grid = torch.arange(self.n, device=device).expand(batch_size, self.n)
-            actions_to_penalize_mask = has_rule_mask.unsqueeze(1) & (
-                all_actions_grid != rule_actions_tensor.unsqueeze(1)
-            )
+        # Create a mask for rule-suggested actions
+        rule_mask = torch.zeros(len(x), self.n, device=pmfs.device, dtype=torch.bool)
+        for i, actions in enumerate(rule_actions):
+            if actions:
+                rule_mask[i, actions] = True
 
-            # Select only the PMFs that need to be shifted
-            pmfs_to_shift = combined_pmfs[actions_to_penalize_mask]
+        # Apply rule influence vectorized
+        rule_multiplier = 1 + (epsilon * self.rule_pmf[0, 0])
+        combined_pmfs[rule_mask] *= rule_multiplier
 
-            if pmfs_to_shift.numel() > 0:
-                # Perform the left shift vectorially
-                if shift_amount < self.n_atoms:
-                    # Create zero padding for the right side of the distribution
-                    padding = torch.zeros(
-                        (pmfs_to_shift.shape[0], shift_amount), device=device
-                    )
-                    # Concatenate the sliced end of the PMF with the padding
-                    shifted_pmfs = torch.cat(
-                        (pmfs_to_shift[:, shift_amount:], padding), dim=1
-                    )
-                else:
-                    # If shift amount is too large, move all probability mass to the first atom
-                    shifted_pmfs = torch.zeros_like(pmfs_to_shift)
-                    shifted_pmfs[:, 0] = pmfs_to_shift.sum(dim=1)
+        # check if at least one rule was applied
+        if rule_mask.any():
+            # --- Episodic Plotting Activation (only during exploitation) ---
+            if is_exploit_step and not self.is_plotting_episode:
+                for plot_eps in self.plotting_epsilons:
+                    if epsilon <= plot_eps and plot_eps not in self.plotted_epsilons:
+                        self.is_plotting_episode = True
+                        self.plotting_episode_epsilon = plot_eps
+                        self.plotted_epsilons.add(plot_eps)
+                        # Reset counters for the new plotting episode
+                        self.exploit_plot_step_count = 0
+                        self.train_plot_step_count = 0
+                        print(f"--- Starting plotting episode for epsilon {plot_eps} (Global Step: {global_step}) ---")
+                        break
 
-                # Place the modified PMFs back into the main tensor
-                combined_pmfs[actions_to_penalize_mask] = shifted_pmfs
+            if not self.is_plotting_episode: # Only check if not already plotting
+                for plot_eps in self.plotting_epsilons:
+                    if epsilon <= plot_eps and plot_eps not in self.plotted_epsilons:
+                        self.is_plotting_episode = True
+                        self.plotting_episode_epsilon = plot_eps
+                        self.plotted_epsilons.add(plot_eps)
+                        print(f"--- Starting plotting episode for epsilon {plot_eps} (Global Step: {global_step}) ---")
+                        break
 
-         # --- Episodic Plotting Activation (only during exploitation) ---
-        if is_exploit_step and not self.is_plotting_episode:
-            for plot_eps in self.plotting_epsilons:
-                if epsilon <= plot_eps and plot_eps not in self.plotted_epsilons:
-                    self.is_plotting_episode = True
-                    self.plotting_episode_epsilon = plot_eps
-                    self.plotted_epsilons.add(plot_eps)
-                    # Reset counters for the new plotting episode
-                    self.exploit_plot_step_count = 0
-                    self.train_plot_step_count = 0
-                    print(f"--- Starting plotting episode for epsilon {plot_eps} (Global Step: {global_step}) ---")
-                    break
+            # --- In-Episode Plotting Execution ---
+            if self.is_plotting_episode:
+                plot_this_step = False
+                plot_type = ""
+                current_plot_step = 0
 
-        if not self.is_plotting_episode: # Only check if not already plotting
-            for plot_eps in self.plotting_epsilons:
-                if epsilon <= plot_eps and plot_eps not in self.plotted_epsilons:
-                    self.is_plotting_episode = True
-                    self.plotting_episode_epsilon = plot_eps
-                    self.plotted_epsilons.add(plot_eps)
-                    print(f"--- Starting plotting episode for epsilon {plot_eps} (Global Step: {global_step}) ---")
-                    break
-                # --- In-Episode Plotting Execution ---
-        # --- In-Episode Plotting Execution ---
-        if self.is_plotting_episode:
-            plot_this_step = False
-            plot_type = ""
-            current_plot_step = 0
-
-            if is_exploit_step and self.exploit_plot_step_count < self.max_plotting_steps:
-                plot_this_step = True
-                plot_type = "exploit"
-                current_plot_step = self.exploit_plot_step_count
-                self.exploit_plot_step_count += 1
-            
-            elif not is_exploit_step and self.train_plot_step_count < self.max_plotting_steps:
-                plot_this_step = True
-                plot_type = "training"
-                current_plot_step = self.train_plot_step_count
-                self.train_plot_step_count += 1
-
-            if plot_this_step:
-                plot_idx = 0  # Plot the first item in the batch
-                suggested_action = rule_actions_tensor[plot_idx].item()
+                if is_exploit_step and self.exploit_plot_step_count < self.max_plotting_steps:
+                    plot_this_step = True
+                    plot_type = "exploit"
+                    current_plot_step = self.exploit_plot_step_count
+                    self.exploit_plot_step_count += 1
                 
-                original_pmf_for_plot = pmfs[plot_idx].unsqueeze(0)
-                modified_pmf_for_plot = combined_pmfs[plot_idx].unsqueeze(0)
+                elif not is_exploit_step and self.train_plot_step_count < self.max_plotting_steps:
+                    plot_this_step = True
+                    plot_type = "training"
+                    current_plot_step = self.train_plot_step_count
+                    self.train_plot_step_count += 1
 
-                # Plot PMF for every action
-                for act_id in range(self.n):
-                    action_name = self.action_id_to_name.get(act_id, f"Action_{act_id}")
-                    is_suggested = "SUGGESTED" if act_id == suggested_action else "NOT_SUGGESTED"
-                    title_prefix = f"GLstep={global_step}_{is_suggested}_{action_name}"
+                if plot_this_step:
+                    plot_idx = 0  # Plot the first item in the batch
+                    suggested_action = rule_actions[plot_idx] if rule_actions[plot_idx] is not None else -1
+                    
+                    original_pmf_for_plot = original_pmfs[plot_idx].unsqueeze(0)
+                    modified_pmf_for_plot = combined_pmfs[plot_idx].unsqueeze(0)
 
-                    _plot_pmfs(
-                        original_pmf_for_plot,
-                        modified_pmf_for_plot,
-                        act_id,
-                        self.n_atoms,
-                        self.plotting_episode_epsilon,
-                        title_prefix,
-                        rule_influence,
-                        episode_step=self.episode_steps_count,
-                        plot_type=plot_type,
-                    )
-                
-                # --- Custom Logging (Exploit vs. Training) ---
-                plot_dir = Path(f"V2aplots/{args.run_code}/epsilon_{self.plotting_episode_epsilon:.2f}/rule_influence_{rule_influence:.2f}/{plot_type}")
-                plot_dir.mkdir(parents=True, exist_ok=True)
+                    # Plot PMF for every action
+                    for act_id in range(self.n):
+                        action_name = self.action_id_to_name.get(act_id, f"Action_{act_id}")
+                        is_suggested = "SUGGESTED" if act_id == suggested_action else "NOT_SUGGESTED"
+                        title_prefix = f"GLstep={global_step}_{is_suggested}_{action_name}"
 
-                if plot_type == "exploit":
-                    grid_img = self.env.envs[0].render()
-                    plt.imsave(plot_dir / f"GLstep={global_step}_EPstep={self.episode_steps_count}_GRID.png", grid_img)
-                
-                elif plot_type == "training":
-                    obs_for_log = self.get_observables(x[plot_idx].unsqueeze(0).cpu().numpy()[:, 4:])
-                    log_filename = plot_dir / f"GLstep={global_step}_EPstep={self.episode_steps_count}_OBSERVABLE.txt"
-                    with open(log_filename, "w") as f:
-                        import json
-                        f.write(json.dumps(obs_for_log, indent=2, default=str))
+                        _plot_pmfs(
+                            original_pmf_for_plot,
+                            modified_pmf_for_plot,
+                            act_id,
+                            self.n_atoms,
+                            self.plotting_episode_epsilon,
+                            title_prefix,
+                            episode_step=self.episode_steps_count,
+                            plot_type=plot_type,
+                        )
+                    
+                    # --- Custom Logging (Exploit vs. Training) ---
+                    plot_dir = Path(f"V1plots/{args.run_code}/epsilon_{self.plotting_episode_epsilon:.2f}/{plot_type}")
+                    plot_dir.mkdir(parents=True, exist_ok=True)
 
-                print(f"--- Plotting step {current_plot_step + 1}/{self.max_plotting_steps} ({plot_type}) for epsilon = {self.plotting_episode_epsilon} ---")
+                    if plot_type == "exploit":
+                        grid_img = self.env.envs[0].render()
+                        plt.imsave(plot_dir / f"GLstep={global_step}_EPstep={self.episode_steps_count}_GRID.png", grid_img)
+                    
+                    elif plot_type == "training":
+                        obs_for_log = self.get_observables(x[plot_idx].unsqueeze(0).cpu().numpy()[:, 4:])
+                        log_filename = plot_dir / f"GLstep={global_step}_EPstep={self.episode_steps_count}_OBSERVABLE.txt"
+                        with open(log_filename, "w") as f:
+                            import json
+                            f.write(json.dumps(obs_for_log, indent=2, default=str))
 
-        # --- Vectorized Normalization ---
-        # Normalize the distributions only for batch items where a rule was applied.
-        # This ensures that each action's probability distribution sums to 1.
-        pmfs_with_rules = combined_pmfs[has_rule_mask]
-        sums = pmfs_with_rules.sum(dim=2, keepdim=True)
-        combined_pmfs[has_rule_mask] = pmfs_with_rules / sums
+                    print(f"--- Plotting step {current_plot_step + 1}/{self.max_plotting_steps} ({plot_type}) for epsilon = {self.plotting_episode_epsilon} ---")
 
-        # --- Final Calculations ---
+        # Renormalize
+        combined_pmfs = combined_pmfs / combined_pmfs.sum(dim=2, keepdim=True)
+
         q_values = (combined_pmfs * self.atoms).sum(2)
         if action is None:
             action = torch.argmax(q_values, dim=1)
 
-        return action, combined_pmfs[torch.arange(batch_size), action], rule_actions_list
+        return action, combined_pmfs[torch.arange(len(x)), action], rule_actions
 
 
     def _apply_rules_batch(self, batch_observables):
@@ -761,10 +823,10 @@ if __name__ == "__main__":
 
     args = tyro.cli(Args)
     assert args.num_envs == 1, "vectorized envs are not supported at the moment"
-    run_name = f"C51rulesV2a_{args.env_id}__seed{args.seed}__{start_datetime}"
+    run_name = f"C51rules_{args.env_id}__seed{args.seed}__{start_datetime}"
     if args.track:
         import wandb
-        wandb.tensorboard.patch(root_logdir=f"C51rulesV2a/runs_rules_training/{run_name}/train")
+        wandb.tensorboard.patch(root_logdir=f"C51rules/runs_rules_training/{run_name}/train")
         wandb.init(
             project=args.wandb_project_name,
             entity=args.wandb_entity,
@@ -773,9 +835,9 @@ if __name__ == "__main__":
             name=run_name,
             monitor_gym=True,
             save_code=True,
-            group=f"C51rulesV2a_ri{args.rule_influence}_{args.run_code}",
+            group=f"C51rules_{args.exploration_fraction}_{args.run_code}",
         )
-    writer = SummaryWriter(f"C51rulesV2a/runs_rules_training/{run_name}/train")
+    writer = SummaryWriter(f"C51rules/runs_rules_training/{run_name}/train")
     writer.add_text(
         "hyperparameters",
         "|param|value|\n|-|-|\n%s"
@@ -862,13 +924,13 @@ if __name__ == "__main__":
             # Updated to use the new get_action method that returns rule_actions
             actions, pmf, rule_actions = q_network.get_action(
                 torch.Tensor(obs).float().to(device), skip=False, epsilon=epsilon,
-                rule_influence=args.rule_influence, global_step=global_step,
-                is_exploit_step=True
+                global_step=global_step, is_exploit_step=True
             )
             if isinstance(actions, torch.Tensor):
                 actions = actions.cpu().numpy()
             else:
                 actions = np.array([actions])
+                
         q_network.episode_steps_count += 1
 
         # TRY NOT TO MODIFY: execute the game and log data.
@@ -951,7 +1013,6 @@ if __name__ == "__main__":
                     action=data.actions.flatten(),
                     skip=False,
                     epsilon=epsilon,
-                    rule_influence=args.rule_influence,
                     global_step=global_step,
                     is_exploit_step=False
                 )
@@ -983,13 +1044,13 @@ if __name__ == "__main__":
                 target_network.load_state_dict(q_network.state_dict())
 
     plt.plot(episodes_returns)
-    plt.title(f'C51rulesV2a on {args.env_id} - Return over {args.total_timesteps} timesteps')
+    plt.title(f'C51rules on {args.env_id} - Return over {args.total_timesteps} timesteps')
     plt.xlabel("Episode")
     plt.ylabel("Return")
     plt.grid(True)
-    path = f'C51rulesV2a/{args.env_id}_C51rules_{args.total_timesteps}_{start_datetime}'
-    if not os.path.exists("C51rulesV2a/"):
-        os.makedirs("C51rulesV2a/")
+    path = f'C51rules/{args.env_id}_C51rules_{args.total_timesteps}_{start_datetime}'
+    if not os.path.exists("C51rules/"):
+        os.makedirs("C51rules/")
     os.makedirs(path)
     plt.savefig(f"{path}/{args.env_id}_C51rules_{args.total_timesteps}_{start_datetime}.png")
     plt.close()
@@ -1020,12 +1081,12 @@ if __name__ == "__main__":
             device=device,
             epsilon=0
         )
-        writer = SummaryWriter(f"C51rulesV2a/runs_rules_training/{run_name}/eval")
+        writer = SummaryWriter(f"C51rules/runs_rules_training/{run_name}/eval")
         for idx, episodic_return in enumerate(episodic_returns):
             writer.add_scalar("episodic_return", episodic_return, idx)
 
         plt.plot(episodic_returns)
-        plt.title(f'C51rulesV2a Eval on {args.env_id} - Return over {eval_episodes} episodes')
+        plt.title(f'C51rules Eval on {args.env_id} - Return over {eval_episodes} episodes')
         plt.xlabel("Episode")
         plt.ylabel("Return")
         plt.ylim(0, 1)
@@ -1037,7 +1098,7 @@ if __name__ == "__main__":
 
             repo_name = f"{args.env_id}-{args.exp_name}-seed{args.seed}"
             repo_id = f"{args.hf_entity}/{repo_name}" if args.hf_entity else repo_name
-            push_to_hub(args, episodic_returns, repo_id, "C51rulesV2a", f"runs/{run_name}", f"videos/{run_name}-eval")
+            push_to_hub(args, episodic_returns, repo_id, "C51rules", f"runs/{run_name}", f"videos/{run_name}-eval")
 
     envs.close()
     writer.close()
