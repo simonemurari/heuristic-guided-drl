@@ -1,4 +1,4 @@
-# docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/dqn/#dqnpy
+# docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/DQNrules/#dqnpy
 import os
 import random
 import time
@@ -77,11 +77,11 @@ def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
 if __name__ == "__main__":
     start_datetime = datetime.now().strftime("%Y_%m_%d-%H_%M_%S")
     args = tyro.cli(Args)
-    run_name = f"OfficeWorld-DQN_{args.env_id}__seed={args.seed}__{start_datetime}"
+    run_name = f"OfficeWorld-DQNrules_{args.env_id}__seed={args.seed}__{start_datetime}"
     if args.track:
         import wandb
 
-        wandb.tensorboard.patch(root_logdir=f"DQN/runs/{run_name}/train")
+        wandb.tensorboard.patch(root_logdir=f"DQNrules/runs/{run_name}/train")
         wandb.init(
             project=args.wandb_project_name,
             entity=args.wandb_entity,
@@ -90,9 +90,9 @@ if __name__ == "__main__":
             name=run_name,
             monitor_gym=True,
             save_code=True,
-            group=f"OfficeWorld-DQN_{args.exploration_fraction}_{args.run_code}",
+            group=f"OfficeWorld-DQNrules_{args.exploration_fraction}_{args.run_code}",
         )
-    writer = SummaryWriter(f"DQN/runs/{run_name}/train")
+    writer = SummaryWriter(f"DQNrules/runs/{run_name}/train")
     writer.add_text(
         "hyperparameters",
         "|param|value|\n|-|-|\n%s"
@@ -267,7 +267,7 @@ if __name__ == "__main__":
                 args,
                 episodic_returns,
                 repo_id,
-                "DQN",
+                "DQNrules",
                 f"runs/{run_name}",
                 f"videos/{run_name}-eval",
             )

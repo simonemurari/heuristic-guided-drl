@@ -106,12 +106,13 @@ venv.bak/
 .idea
 
 wandb/
-C51/
-C51rtv3/
-C51rules/
-C51rulesv2/
-DQNbase/
-DQN/
 find_params.py
 find_params_delay.sh
 run_5_seeds.sh
+dqn.py
+dqn_rules_early_stopping.py
+config_dqn.py
+c51_rules_multiplication_v2_ES.py
+c51_rules_shift_v2_ES.py
+c51_rules_multiplication_v2_Render.py
+run_all.sh

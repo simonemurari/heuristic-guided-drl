@@ -20,6 +20,7 @@ C51/
 OLDPLOTS/
 C51rules/
 C51rulesv2/
+C51rules_multi/
 C51rulesV2/
 C51rulesv3/
 C51rulesV3/
@@ -41,6 +42,13 @@ run_5_seeds_delayed.sh
 run_1_seed_ALL.sh
 run_5_seeds_ALL.sh
 OLD_c51_rules_v2.py
-
+V2aplots/
+V2plots/
+VBaseplots/
 dqn_rules.py
 config_dqn.py
+old_stuff/
+dqn.py
+sac.py
+config_sac.py
+run_all.sh

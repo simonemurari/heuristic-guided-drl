@@ -21,7 +21,7 @@ class Args:
     num_envs: int = 1
     """the number of parallel game environments"""
 
-    run_code: str = "8x8_1key_end_e0.2"
+    run_code: str = "8x8_1key_v6"
     """the group of the run"""
 
     torch_deterministic: bool = True
@@ -55,15 +55,15 @@ class Args:
     print_step: int = 200_000
     """the frequency to printout the training progress"""
 
-    rule_influence: float = 0.4
-    """the influence of the rule-based suggestions on the training process"""
-
     # C51 Algorithm specific arguments
     size_env: int = 8
     """the size of the environment (5, 6, 8, 16)"""
 
     n_keys: int = 1
     """the number of keys in the environment"""
+
+    reward_shaping_amount: float = 0.01
+    """the amount of reward shaping to apply"""
 
     @property
     def env_id(self) -> str:
