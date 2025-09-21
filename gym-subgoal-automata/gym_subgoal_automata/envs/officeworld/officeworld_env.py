@@ -147,7 +147,7 @@ class OfficeWorldEnv(GridWorldEnv):
         self.drop_coffee_on_plant_enable = utils.get_param(self.params, OfficeWorldEnv.DROP_COFFEE_ON_PLANT_ENABLE, False)
         
         self.reward_shaping_enabled = utils.get_param(self.params, OfficeWorldEnv.ENABLE_REWARD_SHAPING, False)
-        self.max_steps = utils.get_param(self.params, OfficeWorldEnv.MAX_STEPS, 1000)
+        self.max_steps = utils.get_param(self.params, OfficeWorldEnv.MAX_STEPS, self.height * self.width * 10)
 
         self.episode_steps = 0
 
@@ -221,9 +221,9 @@ class OfficeWorldEnv(GridWorldEnv):
 
     def _get_reward(self, is_action_suggested):
         if self.reward_shaping_enabled and is_action_suggested:
-            return 1 if self.is_goal_achieved() else 0.01 
+            return 1 if self.is_goal_achieved() else 0.01
         else:
-            return 1 if self.is_goal_achieved() else -0.01
+            return 1 - 0.9 * (self.episode_steps / self.max_steps) if self.is_goal_achieved() else 0
 
     def is_terminal(self):
         return self.is_deadend() or self.is_goal_achieved() or self.episode_steps >= self.max_steps

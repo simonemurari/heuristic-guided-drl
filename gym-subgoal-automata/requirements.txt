@@ -20,8 +20,7 @@ google-auth-oauthlib==0.4.6
 graphviz==0.14
 grpcio==1.62.3
 gym==0.17.2
--e file:///home/simone/Desktop/gym-subgoal-automata
-gymnasium==0.28.1
+# -e file:///home/simone/Desktop/gym-subgoal-automata
 idna==3.10
 importlib-metadata==6.7.0
 jax-jumpy==1.0.0

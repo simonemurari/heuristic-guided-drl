@@ -1,4 +1,4 @@
-# docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/c51/#c51py
+# docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/C51_reward_shaping/#C51_reward_shapingpy
 import random
 import time
 from datetime import datetime
@@ -89,12 +89,12 @@ def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
 if __name__ == "__main__":
     start_datetime = datetime.now().strftime("%Y_%m_%d-%H_%M_%S")
     args = tyro.cli(Args)
-    run_name = f"C51_{args.env_id}__seed={args.seed}__{start_datetime}"
+    run_name = f"C51_reward_shaping_{args.env_id}__seed={args.seed}__{start_datetime}"
     if args.track:
         import wandb
 
         # wandb.login(key=WANDB_KEY)
-        wandb.tensorboard.patch(root_logdir=f"C51/runs/{run_name}/train")
+        wandb.tensorboard.patch(root_logdir=f"C51_reward_shaping/runs/{run_name}/train")
         wandb.init(
             project=args.wandb_project_name,
             entity=args.wandb_entity,
@@ -103,9 +103,9 @@ if __name__ == "__main__":
             name=run_name,
             monitor_gym=True,
             save_code=True,
-            group=f"OfficeWorld-C51_{args.exploration_fraction}_{args.run_code}",
+            group=f"OfficeWorld-C51_reward_shaping_{args.exploration_fraction}_{args.run_code}",
         )
-    writer = SummaryWriter(f"C51/runs/{run_name}/train")
+    writer = SummaryWriter(f"C51_reward_shaping/runs/{run_name}/train")
     writer.add_text(
         "hyperparameters",
         "|param|value|\n|-|-|\n%s"
@@ -187,6 +187,14 @@ if __name__ == "__main__":
 
         # TRY NOT TO MODIFY: execute the game and log data.
         next_obs, rewards, dones, infos = envs.step(actions)
+
+        suggested_actions = envs.envs[0].guide_agent()
+
+        # Compare using a scalar action
+        act = int(actions[0]) if isinstance(actions, np.ndarray) else int(actions)
+        if suggested_actions:
+            if act not in suggested_actions:
+                rewards[0] -= args.reward_shaping_amount
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         for info in infos:
@@ -287,7 +295,7 @@ if __name__ == "__main__":
         }
         torch.save(model_data, model_path)
         print(f"model saved to {model_path}")
-        from cleanrl_utils.evals.c51_eval import evaluate
+        from cleanrl_utils.evals.C51_reward_shaping_eval import evaluate
 
         episodic_returns = evaluate(
             model_path,
@@ -311,7 +319,7 @@ if __name__ == "__main__":
                 args,
                 episodic_returns,
                 repo_id,
-                "C51",
+                "C51_reward_shaping",
                 f"runs/{run_name}",
                 f"videos/{run_name}-eval",
             )

@@ -15,20 +15,20 @@ class Args:
     exp_name: str = os.path.basename(__file__)[: -len(".py")]
     """the name of this experiment"""
 
-    seed: int = 47235
+    seed: int = 23
     """seed of the experiment"""
 
     num_envs: int = 1
     """the number of parallel game environments"""
 
-    run_code: str = "DeliverCoffeeAndMail_1"
+    run_code: str = "DeliverCoffeeAndMail_v4"
     """the group of the run"""
 
     torch_deterministic: bool = True
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
 
-    device: str = "cuda" if torch.cuda.is_available() else "cpu"
-    # device: str = "cpu"
+    # device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    device: str = "cpu"
     # """the device to run the experiment on (set it to cuda if using GPU)"""
 
     track: bool = True
@@ -55,10 +55,12 @@ class Args:
     print_step: int = 25_000
     """the frequency to printout the training progress"""
 
-
     # C51 Algorithm specific arguments
-    task: str = "DeliverCoffeeAndMail"  # DeliverCoffee, DeliverCoffeeAndMail, PatrolAB, PatrolABC
+    task: str = "PatrolABC"  # DeliverCoffee, DeliverCoffeeAndMail, PatrolAB, PatrolABC
     """the task to run the experiments on"""
+
+    reward_shaping_amount: float = 0.1
+    """the amount of reward shaping to apply"""
 
     @property
     def env_id(self) -> str:
@@ -74,10 +76,10 @@ class Args:
     n_atoms: int = 51
     """the number of atoms"""
 
-    v_min: float = -10
+    v_min: float = -1
     """the return lower bound"""
 
-    v_max: float = 10
+    v_max: float = 1
     """the return upper bound"""
 
     buffer_size: int = 100_000
@@ -95,10 +97,10 @@ class Args:
     start_e: float = 1
     """the starting epsilon for exploration"""
 
-    end_e: float = 0.01
+    end_e: float = 0.05
     """the ending epsilon for exploration"""
 
-    exploration_fraction: float = 0.2
+    exploration_fraction: float = 0.1
     """the fraction of `total-timesteps` it takes from start-e to go end-e"""
 
     learning_starts: int = 5000

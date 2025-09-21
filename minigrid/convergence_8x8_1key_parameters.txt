@@ -28,7 +28,7 @@
     start_e: float = 1
     """the starting epsilon for exploration"""
 
-    end_e: float = 0.05
+    end_e: float = 0.2
     """the ending epsilon for exploration"""
 
     exploration_fraction: float = 0.4
