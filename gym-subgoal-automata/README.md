@@ -1,14 +1,17 @@
-## XAI Project C51 + Rules on OfficeWorld
+## OfficeWorld environment
 
-In this repository you can find the code to run the C51 and DQN algorithms augmented with rules on the OfficeWorld environment. The code of the algorithms is based on the original implementation of CleanRL. In `env_README.md` you can find the original README.md of the OfficeWorld environment and in `gym-subgoal-automata` you can find the code for the environments.
+In this repository you can find the code to run the C51 algorithm and its heuristic-guided variants on the OfficeWorld environment. The code is adapted from CleanRL to work with OfficeWorld. In `env_README.md` you can find the original README.md of the OfficeWorld environment and in `gym-subgoal-automata` you can find the code for all the environments.
 
 ### Repository Structure
 
-- **c51_rules.py**:  
-  Contains the implementation of the C51 algorithm with additional rules applied during training.
+- **baselines/**:  
+  This folder contains the implementation of the normal C51 algorithm without any additional rules and the reward machine variant where non suggested actions are penalized.
 
-- **dqn_rules.py**:  
-  Contains the implementation of the DQN algorithm with additional rules applied during training.
+- **Heuristic-Guided variants**:
+  `h_c51_product.py`, `h_c51_shift.py` are the heuristic-guided variants of C51.
+
+- **config.py**:  
+  This file is used to set the different parameters for each run (learning rate, batch size, environment settings, etc.).
 
 ### How to run
 
@@ -25,7 +28,7 @@ In this repository you can find the code to run the C51 and DQN algorithms augme
    If you want to use wandb tracking, create a `.env` file in the repository root and set the proper environment variables (WANDB_KEY, WANDB_PROJECT_NAME, WANDB_ENTITY).
 
 3. **Configure the config.py file** \
-    For `c51_rules.py` you need to set the respective parameters in the `config.py` file while for `dqn_rules.py` you need to set the parameters in `config_dqn.py`.
+   You can find the hyperparameters to configure the `config.py` file to replicate the experiments of the paper in each map looking at the Appendix in the paper and the seeds tested in `seeds.txt`
 
 4. **Run the scripts** \
    To run the different scripts just do e.g.: ```python c51_rules.py``` or ```uv run c51_rules.py``` if you are using `uv` 
