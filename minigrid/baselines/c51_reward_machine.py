@@ -430,12 +430,12 @@ if __name__ == "__main__":
 
     args = tyro.cli(Args)
     assert args.num_envs == 1, "vectorized envs are not supported at the moment"
-    run_name = f"C51reward_shaping_{args.env_id}__seed{args.seed}__{start_datetime}"
+    run_name = f"C51reward_machine_{args.env_id}__seed{args.seed}__{start_datetime}"
     if args.track:
         import wandb
 
         wandb.tensorboard.patch(
-            root_logdir=f"C51reward_shaping/runs_rules_training/{run_name}/train"
+            root_logdir=f"C51reward_machine/runs_rules_training/{run_name}/train"
         )
         wandb.init(
             project=args.wandb_project_name,
@@ -445,9 +445,9 @@ if __name__ == "__main__":
             name=run_name,
             monitor_gym=True,
             save_code=True,
-            group=f"C51reward_shaping_{args.exploration_fraction}_{args.run_code}",
+            group=f"C51reward_machine_{args.exploration_fraction}_{args.run_code}",
         )
-    writer = SummaryWriter(f"C51reward_shaping/runs_rules_training/{run_name}/train")
+    writer = SummaryWriter(f"C51reward_machine/runs_rules_training/{run_name}/train")
     writer.add_text(
         "hyperparameters",
         "|param|value|\n|-|-|\n%s"
@@ -551,7 +551,7 @@ if __name__ == "__main__":
         act = int(actions[0]) if isinstance(actions, np.ndarray) else int(actions)
         if valid_suggestions:
             if act not in valid_suggestions:
-                rewards[0] -= args.reward_shaping_amount
+                rewards[0] -= args.reward_machine_amount
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         if "final_info" in infos:
@@ -647,27 +647,27 @@ if __name__ == "__main__":
 
     plt.plot(episodes_returns)
     plt.title(
-        f"C51reward_shaping on {args.env_id} - Return over {args.total_timesteps} timesteps"
+        f"C51reward_machine on {args.env_id} - Return over {args.total_timesteps} timesteps"
     )
     plt.xlabel("Episode")
     plt.ylabel("Return")
     plt.grid(True)
-    path = f"C51reward_shaping/{args.env_id}_C51reward_shaping_{args.total_timesteps}_{start_datetime}"
-    if not os.path.exists("C51reward_shaping/"):
-        os.makedirs("C51reward_shaping/")
+    path = f"C51reward_machine/{args.env_id}_C51reward_machine_{args.total_timesteps}_{start_datetime}"
+    if not os.path.exists("C51reward_machine/"):
+        os.makedirs("C51reward_machine/")
     os.makedirs(path)
     plt.savefig(
-        f"{path}/{args.env_id}_C51reward_shaping_{args.total_timesteps}_{start_datetime}.png"
+        f"{path}/{args.env_id}_C51reward_machine_{args.total_timesteps}_{start_datetime}.png"
     )
     plt.close()
-    with open(f"{path}/C51reward_shaping_args.txt", "w") as f:
+    with open(f"{path}/C51reward_machine_args.txt", "w") as f:
         for key, value in vars(args).items():
             if key == "env_id":
                 f.write("# C51 Algorithm specific arguments\n")
             f.write(f"{key}: {value}\n")
 
     if args.save_model:
-        model_path = f"{path}/C51reward_shaping_model.pt"
+        model_path = f"{path}/C51reward_machine_model.pt"
         model_data = {
             "model_weights": q_network.state_dict(),
             "args": vars(args),
@@ -675,7 +675,7 @@ if __name__ == "__main__":
         torch.save(model_data, model_path)
         print(f"model saved to {model_path}")
         from baseC51.c51_eval import QNetwork as QNetworkEval
-        from C51reward_shaping_eval import evaluate
+        from C51reward_machine_eval import evaluate
 
         eval_episodes = 100000
         episodic_returns = evaluate(
@@ -688,20 +688,20 @@ if __name__ == "__main__":
             device=device,
             epsilon=0,
         )
-        writer = SummaryWriter(f"C51reward_shaping/runs_rules_training/{run_name}/eval")
+        writer = SummaryWriter(f"C51reward_machine/runs_rules_training/{run_name}/eval")
         for idx, episodic_return in enumerate(episodic_returns):
             writer.add_scalar("episodic_return", episodic_return, idx)
 
         plt.plot(episodic_returns)
         plt.title(
-            f"C51reward_shaping Eval on {args.env_id} - Return over {eval_episodes} episodes"
+            f"C51reward_machine Eval on {args.env_id} - Return over {eval_episodes} episodes"
         )
         plt.xlabel("Episode")
         plt.ylabel("Return")
         plt.ylim(0, 1)
         plt.grid(True)
         plt.savefig(
-            f"{path}/{args.env_id}_C51reward_shaping_{eval_episodes}_{start_datetime}_eval.png"
+            f"{path}/{args.env_id}_C51reward_machine_{eval_episodes}_{start_datetime}_eval.png"
         )
 
         if args.upload_model:
@@ -713,7 +713,7 @@ if __name__ == "__main__":
                 args,
                 episodic_returns,
                 repo_id,
-                "C51reward_shaping",
+                "C51reward_machine",
                 f"runs/{run_name}",
                 f"videos/{run_name}-eval",
             )

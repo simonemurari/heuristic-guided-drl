@@ -21,19 +21,20 @@ if __name__ == "__main__":
 
     ################################################
     # Key Parameters for users
-    parser.add_argument("--env_id", type=str, default="gym_sparsereacher", help="id of environment")
+    parser.add_argument("--env_id", type=str, default="gym_sparsereacher_rmh", help="id of environment")
     parser.add_argument("--algorithm", type=str, default="DSAC_V2", help="DSAC_V2 or DSAC_V1")
     parser.add_argument("--enable_cuda", default=True, help="Enable CUDA")
     parser.add_argument("--seed", default=6, help="Seed for reproducibility")
-    parser.add_argument("--wandb_group", type=str, default="DSAC-v2_SparseReacher-v2", help="Wandb group name")
-    parser.add_argument("--track", type=bool, default=False, help="if toggled, this experiment will be tracked with Weights and Biases")
+    parser.add_argument("--wandb_group", type=str, default="DSAC-v2_SparseReacherRMh-v2", help="Wandb group name")
+    parser.add_argument("--track", type=bool, default=True, help="if toggled, this experiment will be tracked with Weights and Biases")
     wandb_group = parser.parse_known_args()[0].wandb_group
     seed = parser.parse_known_args()[0].seed
     ################################################
     # 1. Parameters for environment
     parser.add_argument("--reward_scale", type=float, default=1, help="reward scale factor")
+    parser.add_argument("--reward_control_weight", type=float, default=0.05)
     parser.add_argument("--action_type", type=str, default="continu", help="Options: continu/discret")
-    parser.add_argument("--is_render", type=bool, default=True, help="Draw environment animation")
+    parser.add_argument("--is_render", type=bool, default=False, help="Draw environment animation")
     parser.add_argument("--is_adversary", type=bool, default=False, help="Adversary training")
     parser.add_argument("--max_episode_steps", type=int, default=500, help="Maximum steps in one episode")
 

@@ -22,7 +22,7 @@ class TanhGaussHEURISTICDistribution:
     def __init__(self, logits, epsilon):
         self.logits = logits
         self.mean, self.std = torch.chunk(logits, chunks=2, dim=-1)
-        self.mean = (1 - epsilon) * self.mean + epsilon * torch.tensor([0.25, -0.45], device=logits.device) # torch.tensor([0.25, -0.45]) or torch.tensor([-1, 1])
+        self.mean = (1 - epsilon) * self.mean + epsilon * torch.tensor([0.25, -0.45], device=logits.device)
         self.gauss_distribution = torch.distributions.Independent(
             base_distribution=torch.distributions.Normal(self.mean, self.std),
             reinterpreted_batch_ndims=1,

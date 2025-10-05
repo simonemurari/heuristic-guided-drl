@@ -21,11 +21,11 @@ if __name__ == "__main__":
 
     ################################################
     # Key Parameters for users
-    parser.add_argument("--env_id", type=str, default="gym_sparsereachercontrol", help="id of environment")
+    parser.add_argument("--env_id", type=str, default="gym_sparsereacher_rmmin", help="id of environment")
     parser.add_argument("--algorithm", type=str, default="DSAC_V2", help="DSAC_V2 or DSAC_V1")
     parser.add_argument("--enable_cuda", default=True, help="Enable CUDA")
     parser.add_argument("--seed", default=6, help="Seed for reproducibility")
-    parser.add_argument("--wandb_group", type=str, default="DSAC-v2_SparseReacherControl-v2", help="Wandb group name")
+    parser.add_argument("--wandb_group", type=str, default="DSAC-v2_SparseReacherRMmin-v2", help="Wandb group name")
     parser.add_argument("--track", type=bool, default=True, help="if toggled, this experiment will be tracked with Weights and Biases")
     wandb_group = parser.parse_known_args()[0].wandb_group
     seed = parser.parse_known_args()[0].seed
