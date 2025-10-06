@@ -1,6 +1,6 @@
-## DSAC-T algorithm
+## H-DSAC-T algorithm
 
-In this repository you can find the code to run the DSAC-T algorithm and the reward machine variants on the SparseReacher-v2 environment from Gym. In `original_README.md` you can find the original `README.md` file of the DSAC-T repository.
+In this repository you can find the code to run the H-DSAC-T algorithm and the reward machine baselines on the SparseReacher-v2 environment from Gym. In `original_README.md` you can find the original `README.md` file of the DSAC-T repository.
 
 ### Repository Structure
 
@@ -25,7 +25,7 @@ In this repository you can find the code to run the DSAC-T algorithm and the rew
    ```
 
    **Configure wandb (optional)** \
-   If you want to use wandb tracking, create a `.env` file in the repository root and set the proper environment variables (WANDB_KEY, WANDB_PROJECT_NAME, WANDB_ENTITY).
+   If you want to use wandb tracking, create a `.env` file in this folder and set the proper environment variables (WANDB_KEY, WANDB_PROJECT_NAME, WANDB_ENTITY).
 
    **Hyperparameters** \
    All the hyperparameters are preconfigured in the scripts in `example_train/`. To reproduce the results of the paper, set the random seeds to the values listed in `seeds.txt` (you can edit the seed in the script or pass it as an argument).
