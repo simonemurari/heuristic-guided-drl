@@ -25,10 +25,10 @@ In this repository you can find the code to run the C51 algorithm and its heuris
    Or you can install `uv` and do `uv sync`.
 
 2. **Configure wandb (optional)** \
-   If you want to use wandb tracking, create a `.env` file in the repository root and set the proper environment variables (WANDB_KEY, WANDB_PROJECT_NAME, WANDB_ENTITY).
+   If you want to use wandb tracking, create a `.env` file in this folder and set the proper environment variables (WANDB_KEY, WANDB_PROJECT_NAME, WANDB_ENTITY).
 
 3. **Configure the config.py file** \
    You can find the hyperparameters to configure the `config.py` file to replicate the experiments of the paper in each map looking at the Appendix in the paper and the seeds tested in `seeds.txt`
 
 4. **Run the scripts** \
-   To run the different scripts just do e.g.: ```python c51_rules.py``` or ```uv run c51_rules.py``` if you are using `uv` 
+   To run the different scripts just do e.g.: ```python h_c51_product.py``` or ```uv run h_c51_product.py``` if you are using `uv` 
