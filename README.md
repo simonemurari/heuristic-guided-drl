@@ -1,6 +1,6 @@
 # Heuristic-Guided Distributional Reinforcement Learning
 
-This repository hosts the code for the paper Heuristic-Guided Distributional Reinforcement Learning which explores how heuristics can be combined with distributional reinforcement learning (DRL). Each subdirectory is a self-contained project with its own training scripts, configuration files and environment dependencies.
+This repository hosts the code for the paper Heuristic-Guided Distributional Reinforcement Learning which explores how heuristics can be combined with distributional reinforcement learning (DiRL). Each subdirectory is a self-contained project with its own training scripts, configuration files and environment dependencies.
 
 ## Repository layout
 
