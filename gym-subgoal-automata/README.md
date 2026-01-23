@@ -22,7 +22,7 @@ In this repository you can find the code to run the C51 algorithm and its heuris
    conda activate xai-project-officeworld
    pip install -r requirements.txt
    ```
-   Or you can install `uv` and do `uv sync`.
+   Or you can install `uv` and do `uv sync` and then `uv pip install -r requirements.txt` to install the packages in the uv environment.
 
 2. **Configure wandb (optional)** \
    If you want to use wandb tracking, create a `.env` file in this folder and set the proper environment variables (WANDB_KEY, WANDB_PROJECT_NAME, WANDB_ENTITY).
